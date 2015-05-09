@@ -37,9 +37,9 @@ module O_ExchangeCorrelation
    real (kind=double) :: rSampleSpace ! This is the spacing of the sample
          !   points.
 
-   real (kind=double), allocatable, dimension (:)   :: radialWeight
-   real (kind=double), allocatable, dimension (:,:) :: exchCorrOverlap
-   real (kind=double), allocatable, dimension (:,:) :: exchRhoOp
+!   real (kind=double), allocatable, dimension (:)   :: radialWeight
+!   real (kind=double), allocatable, dimension (:,:) :: exchCorrOverlap
+!   real (kind=double), allocatable, dimension (:,:) :: exchRhoOp
    integer :: numRayPoints    ! Number of ray points for a specific potential
                               !   site.  Also used to determine the max.
    integer :: maxNumRayPoints ! Max number of ray points of all the potential
@@ -412,6 +412,32 @@ subroutine makeECMeshAndOverlap
    real (kind=double) :: radialmagnitude
    real (kind=double) :: currentAlphaMagnitude
 
+
+   real (kind=double), allocatable, dimension (:)   :: radialWeight
+   real (kind=double), allocatable, dimension (:,:) :: exchCorrOverlap
+   real (kind=double), allocatable, dimension (:,:,:) :: exchRhoOp
+
+   ! These are the different distances that will be needed for the
+   ! first and second derivatives of rho.
+   real (kind=double) :: xdistance
+   real (kind=double) :: ydistance
+   real (kind=double) :: zdistance
+   real (kind=double) :: xxdistance
+   real (kind=double) :: xydistance
+   real (kind=double) :: xzdistance
+   real (kind=double) :: yydistance
+   real (kind=double) :: yzdistance
+   real (kind=double) :: zzdistance
+
+   ! Define variables for MPI
+   integer :: maxSite, minSite
+   integer :: ga_exchCorrOverlap,ga_radWeight
+   integer :: ga_exchRhoOP,ga_numRayPoints
+   integer :: mpiSize, mpierr, mpiRank
+
+   ! Global arrays needs to know if we are doing GGA or LDA
+   integer :: exchCorrOpCode
+
    ! Start making the exchange correlation matrices and mesh points.
    call timeStampStart(7)
 
@@ -422,7 +448,16 @@ subroutine makeECMeshAndOverlap
    ! Allocate space for matrices that will be pointed to by global data
    !   structures later.
    allocate (radialWeight    (maxNumRayPoints))
-   allocate (exchRhoOp       (potDim,maxNumRayPoints))
+   ! When onGGA only space for the rho operator is allocated
+   ! For GGA space is also allocated for first and second derivatives
+   ! of the rho operator
+   if (GGA .eq. 0) then
+     allocate (exchRhoOp       (potDim,maxNumRayPoints,1))
+     exchCorrOpCode = 1
+   else
+     allocate (exchRhoOp       (potDim,maxNumRayPoints,10))
+     exchCorrOpCode = 10
+   endif
    allocate (exchCorrOverlap (potDim,potDim))
 
 
@@ -439,6 +474,8 @@ subroutine makeECMeshAndOverlap
    currentNumPotAlphas = 0
 
    do i = 1, numPotSites
+      
+      exchCorrOverlap(:,:) = 0.0_double
 
       ! Initialize the radialWeight to zero for each potential iteration.
       radialWeight(:) = 0.0_double
@@ -455,7 +492,7 @@ subroutine makeECMeshAndOverlap
             & 2.0_double
 
       ! Initialize the exchange Rho Operator matrix for this potential site.
-      exchRhoOp(:,:) = 0.0_double
+      exchRhoOp(:,:,:) = 0.0_double
 
       ! Initialize a counter to index the total number of points.  Note that
       !   this should work out to the same number that was calculated in the
@@ -528,7 +565,7 @@ subroutine makeECMeshAndOverlap
             !   we exit the loop.
             if (angSampleWeights(weightingIndex) < smallThresh) exit
 
-            ! If the radius is less that the minRadius then we record one
+            ! If the radius is less than the minRadius then we record one
             !   more point and exit.  I am not sure how to make these three
             !   'if' statements work better or be more understandable.  I will
             !   have to spend some time to puzzle it out later.
@@ -628,7 +665,22 @@ subroutine makeECMeshAndOverlap
                currentNegligLimitPlus = currentNegligLimit + &
                      & latticeOffsetMagSqrd + 2.0_double * &
                      & sqrt(currentNegligLimit * latticeOffsetMagSqrd)
-
+               ! These are the distances used when calculating the first
+               ! derivatives (xdistance,ydistance,zdistance) and the second
+               ! derivatives (xxdistance,xydistance,xzdistance,yydistance
+               ! yzdistance,zzdistane) for the exchange rho op value as
+               ! a gaussian function
+               if (GGA.eq.1) then
+                 xdistance = latticeOffset(1)-cellDimsReal(1,m)
+                 ydistance = latticeOffset(1)-cellDimsReal(2,m)
+                 zdistance = latticeOffset(1)-cellDimsReal(3,m)
+                 xxdistance = xdistance ** 2
+                 xydistance = xdistance * ydistance
+                 xzdistance = xdistance * zdistance
+                 yydistance = ydistance ** 2
+                 yzdistance = ydistance * zdistance
+                 zzdistance = zdistance ** 2
+               endif
 
                ! Begin a loop over all the replicated cells.
                do m = 1, numCellsReal
@@ -657,11 +709,47 @@ subroutine makeECMeshAndOverlap
                      ! Increment the index for which alpha we are dealing with
                      !   out of all alphas in the whole system
                      currentPotAlphaIndex = initPotAlphaIndex + n
-
+                     ! If nonGGA then save the exchange rho op value for
+                     ! this point and alpha. For GGA save the rho op value,
+                     ! and its first and second derivatives, for this point
+                     ! and alpha.
+                     if (GGA.eq.0) then
                      ! Save the exchange rho op value for this point and alpha.
-                     exchRhoOp(n+initPotAlphaIndex,k) = &
-                           & exchRhoOp(n+initPotAlphaIndex,k) + &
+                       exchRhoOp(n+initPotAlphaIndex,k,1) = &
+                             & exchRhoOp(n+initPotAlphaIndex,k,1) + &
+                             & exp(-currentAlphaMagnitude)
+                     else
+                       exchRhoOp(n+initPotAlphaIndex,k,1) = &
+                             & exchRhoOp(n+initPotAlphaIndex,k,1) + &
                            & exp(-currentAlphaMagnitude)
+                       exchRhoOp(n+initPotAlphaIndex,k,2) = &
+                           & currentPotAlphas(n) * exchRhoOp(n+initPotAlphaIndex,k,2) + &
+                           & xdistance*exp(-currentAlphaMagnitude)
+                       exchRhoOp(n+initPotAlphaIndex,k,3) = &
+                          & currentPotAlphas(n) * exchRhoOp(n+initPotAlphaIndex,k,3) + &
+                          & ydistance*exp(-currentAlphaMagnitude)
+                       exchRhoOp(n+initPotAlphaIndex,k,4) = &
+                          & currentPotAlphas(n) * exchRhoOp(n+initPotAlphaIndex,k,4) + &
+                          & zdistance*exp(-currentAlphaMagnitude)
+                       exchRhoOp(n+initPotAlphaIndex,k,5) = &
+                          & (currentPotAlphas(n)**2) * exchRhoOp(n+initPotAlphaIndex,k,5) + &
+                          & xxdistance*exp(-currentAlphaMagnitude)
+                       exchRhoOp(n+initPotAlphaIndex,k,6) = &
+                          & (currentPotAlphas(n)**2) * exchRhoOp(n+initPotAlphaIndex,k,6) + &
+                          & xydistance*exp(-currentAlphaMagnitude)
+                       exchRhoOp(n+initPotAlphaIndex,k,7) = &
+                          & (currentPotAlphas(n)**2) * exchRhoOp(n+initPotAlphaIndex,k,7) + &
+                          & xzdistance*exp(-currentAlphaMagnitude)
+                       exchRhoOp(n+initPotAlphaIndex,k,8) = &
+                          & (currentPotAlphas(n)**2) * exchRhoOp(n+initPotAlphaIndex,k,8) + &
+                          & yydistance*exp(-currentAlphaMagnitude)
+                       exchRhoOp(n+initPotAlphaIndex,k,9) = &
+                          & (currentPotAlphas(n)**2) * exchRhoOp(n+initPotAlphaIndex,k,9) + &
+                          & yzdistance*exp(-currentAlphaMagnitude)
+                       exchRhoOp(n+initPotAlphaIndex,k,10) = &
+                          & (currentPotAlphas(n)**2) * exchRhoOp(n+initPotAlphaIndex,k,10) + &
+                          & zzdistance*exp(-currentAlphaMagnitude)
+                     endif
                   enddo
                enddo
             enddo
@@ -673,7 +761,7 @@ subroutine makeECMeshAndOverlap
       do j = 1, numRayPoints
          do k = 1, potDim
             exchCorrOverlap(1:k,k) = exchCorrOverlap(1:k,k) + &
-            exchRhoOp(k,j) * exchRhoOp(1:k,j) * radialWeight(j)
+            exchRhoOp(k,j,1) * exchRhoOp(1:k,j,1) * radialWeight(j)
          enddo
       enddo
 
