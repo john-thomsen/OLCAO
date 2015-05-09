@@ -130,6 +130,13 @@ subroutine makeSCFPot (totalEnergy,inDat)
    real (kind=double), allocatable, dimension (:) :: drl1,drl2
    real (kind=double), allocatable, dimension (:) :: rl0,rl1,rl2
 
+   ! Declarations from ExchCorr
+   integer :: maxNumRayPoints
+   integer :: numRayPoints
+   real (kind=double), allocatable, dimension(:)   :: radialWeight
+   real (kind=double), allocatable, dimension(:,:) :: exchCorrOverlap
+   real (kind=double), allocatable, dimension(:,:,:) :: exchRhoOp
+
    ! Log the date and time we start.
    call timeStampStart (18)
 
