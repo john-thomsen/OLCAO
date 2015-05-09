@@ -131,8 +131,6 @@ subroutine makeSCFPot (totalEnergy,inDat)
    real (kind=double), allocatable, dimension (:) :: rl0,rl1,rl2
 
    ! Declarations from ExchCorr
-   integer :: maxNumRayPoints
-   integer :: numRayPoints
    real (kind=double), allocatable, dimension(:)   :: radialWeight
    real (kind=double), allocatable, dimension(:,:) :: exchCorrOverlap
    real (kind=double), allocatable, dimension(:,:,:) :: exchRhoOp
@@ -872,7 +870,7 @@ subroutine makeSCFPot (totalEnergy,inDat)
       !   potential vector difference to get the difference in real space.
       do j = 1, spin
          do k = 1, numRayPoints
-            realSpacePotDiff(k,j) = sum(exchRhoOp(:,k) * outputPot(:,j))
+            realSpacePotDiff(k,j) = sum(exchRhoOp(:,k,j) * outputPot(:,j))
          enddo
 
          ! Determine the delta to be tested.

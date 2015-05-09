@@ -777,7 +777,7 @@ subroutine makeECMeshAndOverlap
             & radialWeight(:),points,hdferr)
       if (hdferr /= 0) stop 'Failed to write radial weights'
       call h5dwrite_f(exchRhoOp_did(i),H5T_NATIVE_DOUBLE, &
-            & exchRhoOp(:,:),potPoints,hdferr)
+& exchRhoOp(:,:,:),potPoints,hdferr)
       if (hdferr /= 0) stop 'Failed to write exchange rho operator'
 
 
